@@ -1,0 +1,322 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Threat Stack AWS Integration",
+  "Metadata": {
+    "AWS::CloudFormation::Interface": {
+      "ParameterGroups": [{
+          "Label": {
+            "default": "Threat Stack Authentication"
+          },
+          "Parameters": ["TSAccountID", "TSExternalID", "TSBucketName"]
+        },
+        {
+          "Label": {
+            "default": "Amazon Configuration (optional)"
+          },
+          "Parameters": ["TSTopicName"]
+        }
+      ],
+      "ParameterLabels": {
+        "TSAccountID": {
+          "default": "What is your provided Threat Stack Account ID?"
+        },
+        "TSExternalID": {
+          "default": "What is your provided Threat Stack External ID?"
+        },
+        "TSBucketName": {
+          "default": "What is your desired Threat Stack S3 bucket name?"
+        },
+        "TSTopicName": {
+          "default": "What is your desired Threat Stack SNS Topic name?"
+        }
+      }
+    }
+  },
+  "Parameters": {
+    "TSAccountID": {
+      "Description": "The provided Threat Stack Account ID",
+      "Type": "String"
+    },
+    "TSExternalID": {
+      "Description": "The provided Threat Stack External ID",
+      "Type": "String"
+    },
+    "TSBucketName": {
+      "Description": "The desired Threat Stack S3 bucket name. lower-case names only",
+      "Type": "String"
+    },
+    "TSTopicName": {
+      "Description": "The desired Threat Stack SNS Topic name",
+      "Type": "String",
+      "Default": "ThreatStackTopic"
+    }
+  },
+  "Resources": {
+    "ThreatStackBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "BucketName": { "Ref": "TSBucketName" }
+      }
+    },
+    "ThreatStackBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": { "Ref": "ThreatStackBucket" },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+              "Sid": "AWSCloudTrailAclCheck",
+              "Action": "s3:GetBucketAcl",
+              "Effect": "Allow",
+              "Resource": { "Fn::Join": ["", ["arn:aws:s3:::", { "Ref": "ThreatStackBucket" } ] ] },
+              "Principal": {
+                "Service": "cloudtrail.amazonaws.com"
+              }
+            },
+            {
+              "Sid": "AWSCloudTrailWrite",
+              "Action": "s3:PutObject",
+              "Effect": "Allow",
+              "Resource": { "Fn::Join": ["", ["arn:aws:s3:::", { "Ref": "ThreatStackBucket" }, "/AWSLogs/", { "Ref": "AWS::AccountId" }, "/*"] ] },
+              "Principal": {
+                "Service": "cloudtrail.amazonaws.com"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "s3:x-amz-acl": "bucket-owner-full-control"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ThreatStackQueue": {
+      "Type": "AWS::SQS::Queue"
+    },
+    "ThreatStackQueuePolicy": {
+      "Type": "AWS::SQS::QueuePolicy",
+      "Properties": {
+        "PolicyDocument": {
+          "Id": "TSQueuePolicy",
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Sid": "Allow-TS-SendMessage",
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": "sqs:SendMessage",
+            "Resource": "*",
+            "Condition": {
+              "ArnEquals": {
+                "aws:SourceArn": {
+                  "Ref": "ThreatStackTopic"
+                }
+              }
+            }
+          }]
+        },
+        "Queues": [{
+          "Ref": "ThreatStackQueue"
+        }]
+      }
+    },
+    "ThreatStackTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": {
+          "Ref": "TSTopicName"
+        },
+        "Subscription": [{
+          "Endpoint": { "Fn::GetAtt": ["ThreatStackQueue", "Arn"] },
+          "Protocol": "sqs"
+        }]
+      }
+    },
+    "ThreatStackTopicPolicy": {
+      "Type": "AWS::SNS::TopicPolicy",
+      "Properties": {
+        "PolicyDocument": {
+          "Id": "TSTopicPolicy",
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Sid": "AWSCloudTrailSNSPolicy",
+            "Action": "SNS:Publish",
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "cloudtrail.amazonaws.com"
+            },
+            "Resource": "*"
+          }]
+        },
+        "Topics": [{
+          "Ref": "ThreatStackTopic"
+        }]
+      }
+    },
+    "ThreatStackTrail": {
+      "Type": "AWS::CloudTrail::Trail",
+      "DependsOn": [
+        "ThreatStackBucketPolicy",
+        "ThreatStackTopicPolicy"
+      ],
+      "Properties": {
+        "S3BucketName": {
+          "Ref": "TSBucketName"
+        },
+        "SnsTopicName": {
+          "Ref": "TSTopicName"
+        },
+        "IsLogging": true
+      }
+    },
+    "ThreatStackRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": { "Fn::Join": ["", ["arn:aws:iam::", { "Ref": "TSAccountID" }, ":root"] ] } },
+            "Condition": {
+              "StringEquals": {
+                "sts:ExternalId": {
+                  "Ref": "TSExternalID"
+                }
+              }
+            }
+          }]
+        }
+      }
+    },
+    "ThreatStackPolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyName": "ThreatStackPolicy",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Sid": "ThreatStackPermissions",
+            "Action": [
+              "cloudtrail:DescribeTrails",
+              "cloudtrail:GetTrailStatus",
+              "cloudtrail:ListPublicKeys",
+              "cloudtrail:ListTags",
+              "ec2:Describe*",
+              "elasticloadbalancing:DescribeInstanceHealth",
+              "elasticloadbalancing:DescribeListeners",
+              "elasticloadbalancing:DescribeLoadBalancerAttributes",
+              "elasticloadbalancing:DescribeLoadBalancerPolicyTypes",
+              "elasticloadbalancing:DescribeLoadBalancerPolicies",
+              "elasticloadbalancing:DescribeLoadBalancers",
+              "elasticloadbalancing:DescribeRules",
+              "elasticloadbalancing:DescribeSSLPolicies",
+              "elasticloadbalancing:DescribeTags",
+              "elasticloadbalancing:DescribeTargetGroupAttributes",
+              "elasticloadbalancing:DescribeTargetGroups",
+              "elasticloadbalancing:DescribeTargetHealth",
+              "iam:GenerateCredentialReport",
+              "iam:GetAccountPasswordPolicy",
+              "iam:GetCredentialReport",
+              "iam:GetAccountSummary",
+              "iam:ListAttachedUserPolicies",
+              "iam:ListUsers",
+              "kms:GetKeyRotationStatus",
+              "kms:ListKeys",
+              "rds:DescribeAccountAttributes",
+              "rds:DescribeCertificates",
+              "rds:DescribeEngineDefaultClusterParameters",
+              "rds:DescribeEngineDefaultParameters",
+              "rds:DescribeDBClusterParameterGroups",
+              "rds:DescribeDBClusterParameters",
+              "rds:DescribeDBClusterSnapshots",
+              "rds:DescribeDBClusters",
+              "rds:DescribeDBInstances",
+              "rds:DescribeDBLogFiles",
+              "rds:DescribeDBParameterGroups",
+              "rds:DescribeDBParameters",
+              "rds:DescribeDBSecurityGroups",
+              "rds:DescribeDBSnapshotAttributes",
+              "rds:DescribeDBSnapshots",
+              "rds:DescribeDBEngineVersions",
+              "rds:DescribeDBSubnetGroups",
+              "rds:DescribeEventCategories",
+              "rds:DescribeEvents",
+              "rds:DescribeEventSubscriptions",
+              "rds:DescribeOptionGroups",
+              "rds:DescribeOptionGroupOptions",
+              "rds:DescribeOrderableDBInstanceOptions",
+              "rds:DescribePendingMaintenanceActions",
+              "rds:DescribeReservedDBInstances",
+              "rds:DescribeReservedDBInstancesOfferings",
+              "rds:ListTagsForResource",
+              "s3:GetBucketAcl",
+              "s3:GetBucketPolicy",
+              "s3:ListAllMyBuckets",
+              "s3:GetBucketLocation",
+              "s3:GetBucketLogging",
+              "sns:GetEndpointAttributes",
+              "sns:GetPlatformApplicationAttributes",
+              "sns:GetSMSAttributes",
+              "sns:GetSubscriptionAttributes",
+              "sns:GetTopicAttributes",
+              "sns:ListEndpointsByPlatformApplication",
+              "sns:ListPlatformApplications",
+              "sns:ListSubscriptions",
+              "sns:ListSubscriptionsByTopic",
+              "sns:ListTopics"
+            ],
+            "Effect": "Allow",
+            "Resource": "*"
+          }, {
+            "Action": [
+              "sqs:GetQueueAttributes",
+              "sqs:GetQueueUrl",
+              "sqs:DeleteMessage",
+              "sqs:ListQueues",
+              "sqs:ReceiveMessage"
+            ],
+            "Effect": "Allow",
+            "Resource": [ { "Fn::GetAtt": ["ThreatStackQueue", "Arn"] } ]
+          }, {
+            "Action": [
+              "s3:Get*",
+              "s3:List*"
+            ],
+            "Effect": "Allow",
+            "Resource": [ { "Fn::Join": ["", ["arn:aws:s3:::", { "Ref": "ThreatStackBucket" }, "/*"] ] } ]
+          }]
+        },
+        "Roles": [{
+          "Ref": "ThreatStackRole"
+        }]
+      }
+    }
+  },
+  "Outputs": {
+    "CloudTrailRegion": {
+      "Description": "Cloud Trail Region Currently configured",
+      "Value": {
+        "Ref": "AWS::Region"
+      }
+    },
+    "RoleARN": {
+      "Description": "The ARN of the new Threat Stack Role",
+      "Value": {
+        "Fn::GetAtt": ["ThreatStackRole", "Arn"]
+      }
+    },
+    "SQSSource": {
+      "Description": "The name of the Threat Stack SQS queue that was created",
+      "Value": {
+        "Fn::GetAtt": ["ThreatStackQueue", "QueueName"]
+      }
+    },
+    "S3Bucket": {
+      "Description": "The name of the Threat Stack SQS queue that was created",
+      "Value": { "Ref": "TSBucketName" }
+    }
+  }
+}
