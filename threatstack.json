@@ -167,7 +167,8 @@
         "SnsTopicName": {
           "Ref": "TSTopicName"
         },
-        "IsMultiRegionTrail" : true,
+        "IncludeGlobalServiceEvents": true,
+        "IsMultiRegionTrail": true,
         "IsLogging": true
       }
     },
