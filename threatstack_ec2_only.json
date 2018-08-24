@@ -1,0 +1,90 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Threat Stack AWS EC2 Integration",
+  "Metadata": {
+    "AWS::CloudFormation::Interface": {
+      "ParameterGroups": [{
+          "Label": {
+            "default": "Threat Stack Authentication"
+          },
+          "Parameters": ["TSAccountID", "TSExternalID"]
+        }
+      ],
+      "ParameterLabels": {
+        "TSAccountID": {
+          "default": "What is your provided Threat Stack Account ID?"
+        },
+        "TSExternalID": {
+          "default": "What is your provided Threat Stack External ID?"
+        }
+      }
+    }
+  },
+  "Parameters": {
+    "TSAccountID": {
+      "Description": "The provided Threat Stack Account ID",
+      "Type": "String"
+    },
+    "TSExternalID": {
+      "Description": "The provided Threat Stack External ID",
+      "Type": "String"
+    }
+  },
+  "Resources": {
+    "ThreatStackEC2SyncRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": { "Fn::Join": ["", ["arn:aws:iam::", { "Ref": "TSAccountID" }, ":root"] ] } },
+            "Condition": {
+              "StringEquals": {
+                "sts:ExternalId": {
+                  "Ref": "TSExternalID"
+                }
+              }
+            }
+          }]
+        }
+      }
+    },
+    "ThreatStackEC2SyncPolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyName": "ThreatStackEC2SyncPolicy",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Sid": "ThreatStackEC2SyncPermissions",
+            "Action": [
+              "ec2:Describe*"
+            ],
+            "Effect": "Allow",
+            "Resource": "*"
+          }]
+        },
+        "Roles": [{
+          "Ref": "ThreatStackEC2SyncRole"
+        }]
+      }
+    }
+  },
+  "Outputs": {
+    "CloudTrailRegion": {
+      "Description": "Cloud Trail Region Currently configured",
+      "Value": {
+        "Ref": "AWS::Region"
+      }
+    },
+    "RoleARN": {
+      "Description": "The ARN of the new Threat Stack Role",
+      "Value": {
+        "Fn::GetAtt": ["ThreatStackEC2SyncRole", "Arn"]
+      }
+    }
+  }
+}
